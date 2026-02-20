@@ -7,18 +7,15 @@ const io = require('socket.io')(http, {
 
 app.use(express.static('public'));
 
-// Хранилище
 let messages = [];
 let users = new Map();
 
 io.on('connection', (socket) => {
   console.log('Новый пользователь');
   
-  // Даем имя
   const userName = 'Гость_' + Math.floor(Math.random() * 1000);
   users.set(socket.id, { name: userName });
   
-  // Отправляем историю
   socket.emit('history', messages);
   io.emit('online', Array.from(users.values()));
   
@@ -36,29 +33,78 @@ io.on('connection', (socket) => {
     messages.push(userMsg);
     io.emit('message', userMsg);
     
-    // Ответ ИИ (если онлайн < 10)
+    // Ответ ИИ если онлайн < 10
     if (users.size < 10) {
       socket.emit('typing', true);
       
-      // Простой API без ключей
+      let aiText = '';
+      
+      // ПРОБУЕМ ПЕРВЫЙ API (Pollinations)
       try {
+        console.log('Пробуем Pollinations...');
         const response = await fetch('https://text.pollinations.ai/' + 
-          encodeURIComponent(data.text + ' (ответь кратко и с эмодзи)'));
-        const aiText = await response.text();
+          encodeURIComponent(data.text + ' (ответь кратко, как красная коала, 1-2 предложения, с эмодзи)'));
         
-        const aiMsg = {
-          user: '🐨 Красная Коала',
-          text: aiText,
-          time: new Date().toLocaleTimeString(),
-          isAI: true
-        };
-        messages.push(aiMsg);
-        io.emit('message', aiMsg);
+        if (response.ok) {
+          aiText = await response.text();
+          console.log('Pollinations ответил');
+        } else {
+          throw new Error('Pollinations error');
+        }
       } catch (e) {
-        console.log('Ошибка ИИ');
+        console.log('Pollinations не отвечает, пробуем DeepSeek...');
+        
+        // ЗАПАСНОЙ API - DeepSeek
+        try {
+          const response2 = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer sk-or-v1-64e1068c3d8a4c7c9b5f2e1d3a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5g6h'
+            },
+            body: JSON.stringify({
+              model: 'deepseek-chat',
+              messages: [
+                {role: 'system', content: 'Ты красная коала. Отвечай кратко, мило, с эмодзи.'},
+                {role: 'user', content: data.text}
+              ],
+              temperature: 0.9,
+              max_tokens: 60
+            })
+          });
+          
+          const data2 = await response2.json();
+          aiText = data2.choices?.[0]?.message?.content;
+          
+          if (!aiText) throw new Error('Нет ответа от DeepSeek');
+          console.log('DeepSeek ответил');
+          
+        } catch (e2) {
+          console.log('Оба API упали, даем заглушку');
+          
+          // ЗАГЛУШКИ если оба API не работают
+          const fallbacks = [
+            '🐨 Я коала и я сплю на дереве... мяу то есть фррр',
+            '🍃 Ветка шевелится... это я, коала!',
+            '🌳 Красная коала дремлет, но слышит тебя',
+            '🐨 У коалы выходной, спроси позже!',
+            '😴 Zzz... а? что? я тут, просто сплю на дереве'
+          ];
+          aiText = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        }
       }
       
       socket.emit('typing', false);
+      
+      // Отправляем ответ ИИ
+      const aiMsg = {
+        user: '🐨 Красная Коала',
+        text: aiText,
+        time: new Date().toLocaleTimeString(),
+        isAI: true
+      };
+      messages.push(aiMsg);
+      io.emit('message', aiMsg);
     }
   });
   
